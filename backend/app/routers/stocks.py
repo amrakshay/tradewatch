@@ -14,7 +14,7 @@ def list_stocks(active: bool = True, db: Session = Depends(get_db)):
 
 @router.post("", response_model=StockRead)
 def add_stock(body: StockCreate, db: Session = Depends(get_db)):
-    return stock_service.add_stock(db, **body.dict())
+    return stock_service.add_stock(db, **body.model_dump())
 
 
 @router.patch("/{stock_id}", response_model=StockRead)
