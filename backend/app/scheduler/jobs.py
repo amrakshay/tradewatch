@@ -1,5 +1,4 @@
 import logging
-import asyncio
 from zoneinfo import ZoneInfo
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -72,21 +71,23 @@ def setup_scheduler(scan_time: str = "15:45", alert_interval_mins: int = 30):
     )
 
     scheduler.add_job(
-        lambda: asyncio.ensure_future(_job_check_alerts(bypass_window_guard=False)),
+        _job_check_alerts,
         IntervalTrigger(
             minutes=alert_interval_mins,
             start_date=datetime.now(IST).replace(hour=9, minute=15, second=0, microsecond=0),
             timezone=IST,
         ),
         id="alert_monitor",
+        kwargs={"bypass_window_guard": False},
         replace_existing=True,
         misfire_grace_time=120,
     )
 
     scheduler.add_job(
-        lambda: asyncio.ensure_future(_job_check_alerts(bypass_window_guard=True)),
+        _job_check_alerts,
         CronTrigger(day_of_week="mon-fri", hour=15, minute=30, timezone=IST),
         id="alert_monitor_close",
+        kwargs={"bypass_window_guard": True},
         replace_existing=True,
         misfire_grace_time=120,
     )
