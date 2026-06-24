@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import stocks, signals, alerts, backtest
+from app.routers import config, stocks, signals, alerts, backtest
 from app.scheduler.jobs import scheduler, setup_scheduler, reschedule_scan, reschedule_alert_monitor
 from app.database import SessionLocal
 
@@ -54,6 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(config.router)
 app.include_router(stocks.router)
 app.include_router(signals.router)
 app.include_router(alerts.router)
