@@ -56,20 +56,29 @@ class DhanService:
                 logger.error(f"Dhan OHLC fetch failed for {security_id}: {e}")
                 raise
 
-        if not data or "close" not in data:
+        # dhanhq v2 wraps the response: {"status": ..., "remarks": ..., "data": {ohlcv}}
+        if isinstance(data, dict) and "data" in data:
+            inner = data["data"]
+        else:
+            inner = data
+
+        if not inner or "close" not in inner:
+            logger.warning("Dhan OHLC: unexpected response for %s: %s", security_id, data)
             return []
 
         candles = []
-        for i in range(len(data["close"])):
-            ts = data["timestamp"][i]
+        for i in range(len(inner["close"])):
+            ts = inner["timestamp"][i]
+            if ts > 1e10:  # milliseconds guard (currently seconds, but be safe)
+                ts = ts / 1000
             trade_date = datetime.fromtimestamp(ts, tz=IST).strftime("%Y-%m-%d")
             candles.append({
                 "date": trade_date,
-                "open": data["open"][i],
-                "high": data["high"][i],
-                "low": data["low"][i],
-                "close": data["close"][i],
-                "volume": data["volume"][i],
+                "open": inner["open"][i],
+                "high": inner["high"][i],
+                "low": inner["low"][i],
+                "close": inner["close"][i],
+                "volume": inner["volume"][i],
             })
 
         return sorted(candles, key=lambda c: c["date"])
