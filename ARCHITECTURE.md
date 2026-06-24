@@ -53,6 +53,7 @@ TradeWatch is a standalone desktop/server application that:
 | Backend API | Python 3.11 + FastAPI | Async support, excellent typing, auto-docs |
 | Database | SQLite (via SQLAlchemy) | Zero-ops, sufficient for single-user |
 | ORM | SQLAlchemy 2.x (sync) | Mature, good SQLite support |
+| Migrations | Alembic | Schema versioning, safe incremental upgrades |
 | Scheduler | APScheduler 3.x | Embeds in FastAPI process, cron + interval |
 | Stock Data | Dhan SDK (`dhanhq`) | Official Python client |
 | Telegram | `python-telegram-bot` (async) | Official library |
@@ -1057,8 +1058,14 @@ pullback/
 │   │   └── scheduler/
 │   │       ├── __init__.py
 │   │       └── jobs.py              # APScheduler setup and job definitions
-│   ├── migrations/
-│   │   └── init_db.py               # Create tables, seed default config row
+│   ├── alembic/
+│   │   ├── env.py                   # Connects Alembic to SQLAlchemy Base + models
+│   │   ├── script.py.mako
+│   │   └── versions/
+│   │       └── 0001_initial_schema.py
+│   ├── alembic.ini                  # Alembic config (DB URL, script location)
+│   ├── scripts/
+│   │   └── seed_db.py               # Seed default app_config row (run after migrations)
 │   ├── requirements.txt
 │   ├── .env.example
 │   └── README.md
@@ -1115,8 +1122,8 @@ pullback/
 ### Phase 0: Foundation (Day 1–2)
 
 - [ ] Initialize project structure (backend + frontend scaffolds)
-- [ ] Set up SQLAlchemy models and `init_db.py`
-- [ ] Seed `app_config` table with defaults
+- [ ] Set up SQLAlchemy models + Alembic migrations (`alembic upgrade head`)
+- [ ] Seed `app_config` table with defaults via `scripts/seed_db.py`
 - [ ] Implement `EncryptionService` (Fernet key gen, encrypt/decrypt/mask)
 - [ ] Implement `ConfigService` (read/write single row, encrypt on write, mask on read)
 - [ ] Implement `TokenService` (check validity via `GET /v2/profile`, renew via `POST /v2/RenewToken`, Telegram alert on expiry)
