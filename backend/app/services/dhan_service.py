@@ -74,7 +74,48 @@ class DhanService:
 
         return sorted(candles, key=lambda c: c["date"])
 
-    # get_daily_ohlc() (cache-first version) is added in T08
+    async def get_daily_ohlc(
+        self,
+        security_id: str,
+        from_date: str,         # YYYY-MM-DD
+        to_date: str,           # YYYY-MM-DD
+        db=None,
+        exchange_segment: str = "NSE_EQ",
+    ) -> list[dict]:
+        """
+        Cache-first daily OHLC fetch.
+        1. Get cached candles for the range.
+        2. Find missing date gaps.
+        3. Fetch only missing ranges from Dhan API.
+        4. Store newly fetched candles in cache.
+        5. Merge and return sorted list.
+        """
+        if db is None:
+            return await self.get_daily_ohlc_raw(security_id, from_date, to_date, exchange_segment)
+
+        from app.services.candle_cache import (
+            get_cached_candles, find_missing_ranges, store_candles
+        )
+
+        cached = get_cached_candles(db, security_id, from_date, to_date)
+        missing_ranges = find_missing_ranges(db, security_id, from_date, to_date)
+
+        if not missing_ranges:
+            logger.debug(f"Cache hit: {security_id} {from_date}→{to_date}")
+            return cached
+
+        new_candles = []
+        for gap_start, gap_end in missing_ranges:
+            logger.debug(f"Cache miss: fetching {security_id} {gap_start}→{gap_end}")
+            fetched = await self.get_daily_ohlc_raw(
+                security_id, gap_start, gap_end, exchange_segment
+            )
+            store_candles(db, security_id, fetched)
+            new_candles.extend(fetched)
+
+        all_candles = {c["date"]: c for c in cached}
+        all_candles.update({c["date"]: c for c in new_candles})
+        return sorted(all_candles.values(), key=lambda c: c["date"])
 
     # ── LTP Batch ────────────────────────────────────────────────────────────
 
