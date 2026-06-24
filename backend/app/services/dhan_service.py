@@ -4,7 +4,7 @@ import httpx
 import csv
 import io
 from zoneinfo import ZoneInfo
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from dhanhq import dhanhq
 from app.services.config_service import get_decrypted_config
 
@@ -41,6 +41,10 @@ class DhanService:
         """
         Fetch daily candles from Dhan API (no caching).
         Returns list of {date, open, high, low, close, volume}.
+
+        When to_date is today and Dhan returns DH-905 (market holiday), retries
+        with to_date stepped back one calendar day so historical data is still
+        returned for the rest of the range.
         """
         async with _historical_semaphore:
             try:
@@ -63,6 +67,16 @@ class DhanService:
             inner = data
 
         if not inner or "close" not in inner:
+            # If to_date is today and Dhan rejected the whole range (holiday),
+            # retry with the previous calendar day so we still get historical data.
+            today_str = date.today().isoformat()
+            if to_date == today_str:
+                prev = (date.today() - timedelta(days=1)).isoformat()
+                if prev >= from_date:
+                    logger.debug(
+                        "Dhan DH-905 for %s with to_date=today, retrying to %s", security_id, prev
+                    )
+                    return await self.get_daily_ohlc_raw(security_id, from_date, prev, exchange_segment)
             logger.warning("Dhan OHLC: unexpected response for %s: %s", security_id, data)
             return []
 
