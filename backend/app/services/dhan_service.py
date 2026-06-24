@@ -83,6 +83,20 @@ class DhanService:
 
         return sorted(candles, key=lambda c: c["date"])
 
+    @staticmethod
+    def _max_available_date() -> str:
+        """
+        Last date for which Dhan has finalized daily data.
+        Before 15:30 IST the current day's candle isn't published yet, so
+        cap at yesterday; after close cap at today.
+        """
+        from datetime import date, timedelta
+        now = datetime.now(IST)
+        market_closed = now >= now.replace(hour=15, minute=30, second=0, microsecond=0)
+        if market_closed:
+            return date.today().isoformat()
+        return (date.today() - timedelta(days=1)).isoformat()
+
     async def get_daily_ohlc(
         self,
         security_id: str,
@@ -99,6 +113,11 @@ class DhanService:
         4. Store newly fetched candles in cache.
         5. Merge and return sorted list.
         """
+        # Never ask Dhan for dates beyond what it has published.
+        to_date = min(to_date, self._max_available_date())
+        if from_date > to_date:
+            return []
+
         if db is None:
             return await self.get_daily_ohlc_raw(security_id, from_date, to_date, exchange_segment)
 

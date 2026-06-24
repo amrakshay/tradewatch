@@ -105,21 +105,28 @@ def find_missing_ranges(
 
     missing_gaps = []
     gap_start = None
+    last_missing_weekday = None
 
     current = start
     while current <= end:
+        if current.weekday() >= 5:          # weekend — skip, never a gap boundary
+            current += timedelta(days=1)
+            continue
+
         ds = current.strftime("%Y-%m-%d")
-        if current.weekday() < 5 and ds not in cached_dates:  # weekday not cached
+        if ds not in cached_dates:
             if gap_start is None:
                 gap_start = ds
+            last_missing_weekday = ds
         else:
-            if gap_start is not None:
-                gap_end = (current - timedelta(days=1)).strftime("%Y-%m-%d")
-                missing_gaps.append((gap_start, gap_end))
+            if gap_start is not None:       # cached weekday closes the open gap
+                missing_gaps.append((gap_start, last_missing_weekday))
                 gap_start = None
+                last_missing_weekday = None
+
         current += timedelta(days=1)
 
     if gap_start is not None:
-        missing_gaps.append((gap_start, end.strftime("%Y-%m-%d")))
+        missing_gaps.append((gap_start, last_missing_weekday))
 
     return missing_gaps
