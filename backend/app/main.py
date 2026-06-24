@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import stocks
+from app.routers import stocks, signals
 
 app = FastAPI(title="TradeWatch", version="0.1.0")
 
@@ -13,6 +13,7 @@ app.add_middleware(
 )
 
 app.include_router(stocks.router)
+app.include_router(signals.router)
 
 
 @app.get("/health")
