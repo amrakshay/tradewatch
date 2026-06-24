@@ -1,6 +1,6 @@
-# PullbackScanner — System Architecture & Implementation Plan
+# TradeWatch — System Architecture & Implementation Plan
 
-> Indian equity market pullback opportunity scanner with alert system, Telegram notifications, and backtesting engine.
+> Indian equity market trading signal scanner with alert system, Telegram notifications, and backtesting engine. Starts with pullback strategy; extensible to any strategy.
 
 ---
 
@@ -27,7 +27,7 @@
 
 ## 1. System Overview
 
-PullbackScanner is a standalone desktop/server application that:
+TradeWatch is a standalone desktop/server application that:
 
 - **Scans** Nifty 500 (or any configured stock list) every market close (~3:30 PM IST) for stocks that have risen more than a configurable % (default 10%) over a configurable number of days (default 4)
 - **Stores** qualifying stocks as dated "signals" in a local SQLite database
@@ -1103,7 +1103,7 @@ pullback/
 │   ├── tailwind.config.js
 │   └── package.json
 │
-├── pullback.db                       # SQLite file (auto-created on first run)
+├── tradewatch.db                     # SQLite file (auto-created on first run)
 ├── backend/.secret_key               # Fernet encryption key (auto-generated, never committed)
 └── start.sh                          # Script to start backend + frontend
 ```
