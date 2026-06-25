@@ -21,12 +21,15 @@ async def lifespan(app: FastAPI):
         setup_scheduler(
             scan_time=cfg.scan_time,
             alert_interval_mins=cfg.alert_check_interval_mins,
+            alert_start=cfg.alert_check_start,
+            alert_end=cfg.alert_check_end,
         )
         scheduler.start()
 
         register_hooks(
             on_scan_time=reschedule_scan,
-            on_alert_interval=reschedule_alert_monitor,
+            on_alert_interval=lambda mins: reschedule_alert_monitor(new_interval_mins=mins),
+            on_alert_window=lambda start, end: reschedule_alert_monitor(new_start=start, new_end=end),
             on_dhan_creds=lambda: None,
             on_telegram_creds=lambda: None,
         )

@@ -10,15 +10,18 @@ IST = ZoneInfo("Asia/Kolkata")
 # Side-effect hooks — set by main.py after services are initialized
 _on_scan_time_changed = None         # callable(new_scan_time: str)
 _on_alert_interval_changed = None    # callable(new_interval_mins: int)
+_on_alert_window_changed = None      # callable(new_start: str, new_end: str)
 _on_dhan_credentials_changed = None  # callable()
 _on_telegram_credentials_changed = None  # callable()
 
 
-def register_hooks(on_scan_time, on_alert_interval, on_dhan_creds, on_telegram_creds):
-    global _on_scan_time_changed, _on_alert_interval_changed
+def register_hooks(on_scan_time, on_alert_interval, on_alert_window,
+                   on_dhan_creds, on_telegram_creds):
+    global _on_scan_time_changed, _on_alert_interval_changed, _on_alert_window_changed
     global _on_dhan_credentials_changed, _on_telegram_credentials_changed
     _on_scan_time_changed = on_scan_time
     _on_alert_interval_changed = on_alert_interval
+    _on_alert_window_changed = on_alert_window
     _on_dhan_credentials_changed = on_dhan_creds
     _on_telegram_credentials_changed = on_telegram_creds
 
@@ -119,6 +122,15 @@ def update_config(db: Session, update: ConfigUpdate) -> ConfigRead:
         and _on_alert_interval_changed
     ):
         _on_alert_interval_changed(update.alert_check_interval_mins)
+
+    window_changed = (
+        (update.alert_check_start and update.alert_check_start != old["alert_check_start"])
+        or (update.alert_check_end and update.alert_check_end != old["alert_check_end"])
+    )
+    if window_changed and _on_alert_window_changed:
+        new_start = update.alert_check_start or old["alert_check_start"]
+        new_end   = update.alert_check_end   or old["alert_check_end"]
+        _on_alert_window_changed(new_start, new_end)
     if update.dhan_access_token and not _is_masked(update.dhan_access_token) and _on_dhan_credentials_changed:
         _on_dhan_credentials_changed()
     if update.telegram_bot_token and not _is_masked(update.telegram_bot_token) and _on_telegram_credentials_changed:

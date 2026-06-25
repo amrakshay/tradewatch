@@ -11,10 +11,14 @@ from app.services.config_service import get_decrypted_config
 logger = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
 
+
+class DhanNoDataError(Exception):
+    """Raised when Dhan returns DH-905: no historical data for this security."""
+
 DHAN_INSTRUMENT_CSV_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
-# Semaphore: max 5 concurrent historical data requests (Dhan rate limit)
-_historical_semaphore = asyncio.Semaphore(5)
+# Semaphore: max 2 concurrent historical data requests (~4 req/s, avoids DH-904)
+_historical_semaphore = asyncio.Semaphore(2)
 
 
 class DhanService:
@@ -41,24 +45,45 @@ class DhanService:
         """
         Fetch daily candles from Dhan API (no caching).
         Returns list of {date, open, high, low, close, volume}.
-
-        When to_date is today and Dhan returns DH-905 (market holiday), retries
-        with to_date stepped back one calendar day so historical data is still
-        returned for the rest of the range.
         """
-        async with _historical_semaphore:
-            try:
-                data = self._dhan.historical_daily_data(
-                    security_id=security_id,
-                    exchange_segment=exchange_segment,
-                    instrument_type="EQUITY",
-                    from_date=from_date,
-                    to_date=to_date,
-                    expiry_code=0,
+        loop = asyncio.get_event_loop()
+        data = None
+        # Retry up to 4 times on DH-904 rate-limit with exponential backoff
+        for attempt in range(4):
+            async with _historical_semaphore:
+                try:
+                    # Run the synchronous requests-based SDK call in a thread so the
+                    # event loop is not blocked while waiting for the HTTP response.
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda: self._dhan.historical_daily_data(
+                            security_id=security_id,
+                            exchange_segment=exchange_segment,
+                            instrument_type="EQUITY",
+                            from_date=from_date,
+                            to_date=to_date,
+                            expiry_code=0,
+                        ),
+                    )
+                except Exception as e:
+                    logger.error(f"Dhan OHLC fetch failed for {security_id}: {e}")
+                    raise
+                finally:
+                    # Pace requests: 0.5s per slot × 2 slots → ~4 req/s, well under Dhan's limit
+                    await asyncio.sleep(0.5)
+
+            # DH-904: rate limited — back off and retry
+            remarks = data.get("remarks") if isinstance(data, dict) else None
+            error_code = remarks.get("error_code") if isinstance(remarks, dict) else None
+            if error_code == "DH-904":
+                wait = 2 ** attempt  # 1s, 2s, 4s, 8s
+                logger.warning(
+                    "Dhan OHLC: rate limited (DH-904) for %s, retry %d/%d in %ds",
+                    security_id, attempt + 1, 4, wait,
                 )
-            except Exception as e:
-                logger.error(f"Dhan OHLC fetch failed for {security_id}: {e}")
-                raise
+                await asyncio.sleep(wait)
+                continue
+            break  # success or non-retryable error
 
         # dhanhq v2 wraps the response: {"status": ..., "remarks": ..., "data": {ohlcv}}
         if isinstance(data, dict) and "data" in data:
@@ -67,16 +92,12 @@ class DhanService:
             inner = data
 
         if not inner or "close" not in inner:
-            # If to_date is today and Dhan rejected the whole range (holiday),
-            # retry with the previous calendar day so we still get historical data.
-            today_str = date.today().isoformat()
-            if to_date == today_str:
-                prev = (date.today() - timedelta(days=1)).isoformat()
-                if prev >= from_date:
-                    logger.debug(
-                        "Dhan DH-905 for %s with to_date=today, retrying to %s", security_id, prev
-                    )
-                    return await self.get_daily_ohlc_raw(security_id, from_date, prev, exchange_segment)
+            remarks = data.get("remarks") if isinstance(data, dict) else None
+            error_code = remarks.get("error_code") if isinstance(remarks, dict) else None
+            if error_code == "DH-905":
+                raise DhanNoDataError(
+                    f"DH-905: no historical data available for security_id={security_id}"
+                )
             logger.warning("Dhan OHLC: unexpected response for %s: %s", security_id, data)
             return []
 
@@ -104,7 +125,6 @@ class DhanService:
         Before 15:30 IST the current day's candle isn't published yet, so
         cap at yesterday; after close cap at today.
         """
-        from datetime import date, timedelta
         now = datetime.now(IST)
         market_closed = now >= now.replace(hour=15, minute=30, second=0, microsecond=0)
         if market_closed:
@@ -149,9 +169,20 @@ class DhanService:
         new_candles = []
         for gap_start, gap_end in missing_ranges:
             logger.debug(f"Cache miss: fetching {security_id} {gap_start}→{gap_end}")
-            fetched = await self.get_daily_ohlc_raw(
-                security_id, gap_start, gap_end, exchange_segment
-            )
+            try:
+                fetched = await self.get_daily_ohlc_raw(
+                    security_id, gap_start, gap_end, exchange_segment
+                )
+            except DhanNoDataError:
+                if not cached:
+                    # No cached data at all — this security genuinely has no data
+                    raise
+                # We have prior cached data; this gap (e.g. today's candle) just
+                # isn't published yet. Return what we have.
+                logger.debug(
+                    "DH-905 for %s gap %s→%s; using cached data", security_id, gap_start, gap_end
+                )
+                break
             store_candles(db, security_id, fetched)
             new_candles.extend(fetched)
 

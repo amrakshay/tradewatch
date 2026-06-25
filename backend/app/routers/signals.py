@@ -30,6 +30,11 @@ def get_latest_signals(db: Session = Depends(get_db)):
     return {"date": latest, "count": len(signals), "signals": signals}
 
 
+@router.get("/scanner/progress")
+def get_scanner_progress():
+    return scanner_service.get_scan_progress()
+
+
 @router.post("/scanner/run")
 async def run_scanner(db: Session = Depends(get_db)):
     result = await scanner_service.run_scan(db)

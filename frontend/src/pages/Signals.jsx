@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getSignalDates, getSignals, runScanner } from '../api/signals'
+import { getSignalDates, getSignals, runScanner, getScannerProgress } from '../api/signals'
 import SignalTable from '../components/signals/SignalTable'
 import SetAlertModal from '../components/signals/SetAlertModal'
 
@@ -29,11 +29,21 @@ export default function Signals() {
   const scanMutation = useMutation({
     mutationFn: runScanner,
     onSuccess: (result) => {
-      alert(`Scan complete: ${result.qualified} signals found on ${result.scan_date}`)
       qc.invalidateQueries({ queryKey: ['signal-dates'] })
       qc.invalidateQueries({ queryKey: ['signals'] })
     },
   })
+
+  const { data: progress } = useQuery({
+    queryKey: ['scanner-progress'],
+    queryFn: getScannerProgress,
+    enabled: scanMutation.isPending,
+    refetchInterval: scanMutation.isPending ? 1500 : false,
+  })
+
+  const pct = progress?.total > 0
+    ? Math.round((progress.completed / progress.total) * 100)
+    : 0
 
   return (
     <div className="space-y-4">
@@ -64,6 +74,26 @@ export default function Signals() {
         </button>
       </div>
 
+      {scanMutation.isPending && progress?.status === 'running' && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-blue-700 font-medium">
+              Scanning Nifty 500 — {progress.completed} / {progress.total} stocks
+            </span>
+            <span className="text-blue-600 font-semibold">{pct}%</span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-blue-200 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-500"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="text-xs text-blue-500">
+            {progress.signals_found} signal{progress.signals_found !== 1 ? 's' : ''} found so far
+          </p>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-gray-400 text-sm">Loading…</div>
       ) : (
@@ -76,6 +106,7 @@ export default function Signals() {
       {alertTarget && (
         <SetAlertModal
           signal={alertTarget}
+          scanDate={selectedDate}
           onClose={() => setAlertTarget(null)}
           onCreated={() => {
             setAlertTarget(null)

@@ -11,3 +11,6 @@ export const getLatestSignals = () =>
 
 export const runScanner = () =>
   client.post('/scanner/run').then(r => r.data)
+
+export const getScannerProgress = () =>
+  client.get('/scanner/progress').then(r => r.data)

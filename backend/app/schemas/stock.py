@@ -10,6 +10,8 @@ class StockRead(BaseModel):
     exchange_segment: str
     universe_tag: str
     is_active: bool
+    data_status: Optional[str] = None
+    data_error: Optional[str] = None
 
     class Config:
         from_attributes = True

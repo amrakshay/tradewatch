@@ -4,7 +4,7 @@ import {
   getConfig, updateConfig, testDhanConnection, renewDhanToken, testTelegram,
 } from '../api/config'
 import {
-  getStocks, addStock, toggleStock, deleteStock, syncNifty500,
+  getStocks, addStock, toggleStock, deleteStock, syncNifty500, resetStockStatus,
 } from '../api/stocks'
 
 // ─── Toast ───────────────────────────────────────────────────────────────────
@@ -529,18 +529,32 @@ function StockUniverseCard({ toast }) {
   const qc = useQueryClient()
   const [syncing, setSyncing] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  const [filter, setFilter] = useState('all') // 'all' | 'no_data'
+  const [syncResult, setSyncResult] = useState(null)
 
   const { data: stocks = [], isLoading } = useQuery({
     queryKey: ['stocks-all'],
     queryFn: () => getStocks(false),
   })
 
+  const noDataCount = stocks.filter(s => s.data_status === 'no_data').length
+
+  const visible = filter === 'no_data'
+    ? stocks.filter(s => s.data_status === 'no_data')
+    : stocks
+
   const handleSync = async () => {
     setSyncing(true)
+    setSyncResult(null)
     try {
       const result = await syncNifty500()
-      toast(`Synced: ${result.matched ?? 0} matched, ${result.unmatched ?? 0} unmatched`)
+      setSyncResult(result)
       qc.invalidateQueries(['stocks-all'])
+      if (result.no_data_count > 0) {
+        toast(`Sync done — ${result.no_data_count} stock(s) flagged with no data`, 'error')
+      } else {
+        toast(`Synced: ${result.matched} matched, ${result.unmatched} unmatched, ${result.validated} validated`)
+      }
     } catch (err) {
       toast(err.message, 'error')
     } finally {
@@ -552,6 +566,16 @@ function StockUniverseCard({ toast }) {
     try {
       await toggleStock(id, is_active)
       qc.invalidateQueries(['stocks-all'])
+    } catch (err) {
+      toast(err.message, 'error')
+    }
+  }
+
+  const handleReset = async (id, symbol) => {
+    try {
+      await resetStockStatus(id)
+      qc.invalidateQueries(['stocks-all'])
+      toast(`${symbol} re-enabled for scanning`)
     } catch (err) {
       toast(err.message, 'error')
     }
@@ -570,9 +594,13 @@ function StockUniverseCard({ toast }) {
 
   const handleAdd = async formData => {
     try {
-      await addStock(formData)
+      const stock = await addStock(formData)
       qc.invalidateQueries(['stocks-all'])
-      toast(`${formData.symbol} added`)
+      if (stock.data_status === 'no_data') {
+        toast(`${formData.symbol} added but flagged: ${stock.data_error}`, 'error')
+      } else {
+        toast(`${formData.symbol} added and validated`)
+      }
     } catch (err) {
       toast(err.message, 'error')
       throw err
@@ -585,7 +613,14 @@ function StockUniverseCard({ toast }) {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Stock Universe</CardTitle>
+            <div className="flex items-center gap-3">
+              <CardTitle>Stock Universe</CardTitle>
+              {noDataCount > 0 && (
+                <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-medium">
+                  {noDataCount} no-data
+                </span>
+              )}
+            </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setShowAdd(true)}>Add Custom Stock</Button>
               <Button variant="outline" onClick={handleSync} disabled={syncing}>
@@ -600,49 +635,133 @@ function StockUniverseCard({ toast }) {
           ) : stocks.length === 0 ? (
             <p className="text-sm text-gray-500">No stocks in universe. Sync Nifty 500 to populate.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
-                    <th className="py-2 pr-4 font-medium">Symbol</th>
-                    <th className="py-2 pr-4 font-medium">Name</th>
-                    <th className="py-2 pr-4 font-medium">Universe</th>
-                    <th className="py-2 pr-4 font-medium text-center">Active</th>
-                    <th className="py-2 font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stocks.map(s => (
-                    <tr key={s.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                      <td className="py-2 pr-4 font-mono font-medium text-gray-900">{s.symbol}</td>
-                      <td className="py-2 pr-4 text-gray-600 max-w-xs truncate">{s.name}</td>
-                      <td className="py-2 pr-4">
-                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">
-                          {s.universe_tag}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-4 text-center">
-                        <input
-                          type="checkbox"
-                          checked={s.is_active}
-                          onChange={e => handleToggle(s.id, e.target.checked)}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer"
-                        />
-                      </td>
-                      <td className="py-2">
-                        <button
-                          onClick={() => handleDelete(s.id)}
-                          className="text-red-500 hover:underline text-xs"
-                        >
-                          Remove
-                        </button>
-                      </td>
+            <>
+              {syncResult && (
+                <div className={`mb-4 rounded-lg border p-4 text-sm space-y-2 ${
+                  syncResult.no_data_count > 0
+                    ? 'border-amber-200 bg-amber-50'
+                    : 'border-green-200 bg-green-50'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-gray-800">Last sync result</span>
+                    <button onClick={() => setSyncResult(null)} className="text-gray-400 hover:text-gray-600 text-xs">Dismiss</button>
+                  </div>
+                  <div className="flex gap-4 text-xs text-gray-600">
+                    <span>{syncResult.matched} matched</span>
+                    <span>{syncResult.unmatched} unmatched</span>
+                    <span>{syncResult.validated} validated</span>
+                    {syncResult.no_data_count > 0 && (
+                      <span className="text-amber-700 font-medium">{syncResult.no_data_count} flagged no-data</span>
+                    )}
+                  </div>
+                  {syncResult.unmatched_symbols?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">No Dhan ticker match:</p>
+                      <p className="text-xs text-gray-500 font-mono">{syncResult.unmatched_symbols.join(', ')}</p>
+                    </div>
+                  )}
+                  {syncResult.no_data_symbols?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-amber-700 mb-1">Flagged (no data / &lt;4 trading days):</p>
+                      <p className="text-xs text-amber-600 font-mono">{syncResult.no_data_symbols.join(', ')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex items-center gap-2 mb-3">
+                <button
+                  onClick={() => setFilter('all')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    filter === 'all'
+                      ? 'bg-gray-900 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  All ({stocks.length})
+                </button>
+                <button
+                  onClick={() => setFilter('no_data')}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    filter === 'no_data'
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  }`}
+                >
+                  No Data ({noDataCount})
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wider">
+                      <th className="py-2 pr-4 font-medium">Symbol</th>
+                      <th className="py-2 pr-4 font-medium">Name</th>
+                      <th className="py-2 pr-4 font-medium">Universe</th>
+                      <th className="py-2 pr-4 font-medium">Status</th>
+                      <th className="py-2 pr-4 font-medium text-center">Active</th>
+                      <th className="py-2 font-medium"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="text-xs text-gray-400 mt-3">{stocks.length} stock{stocks.length !== 1 ? 's' : ''} total</p>
-            </div>
+                  </thead>
+                  <tbody>
+                    {visible.map(s => (
+                      <tr
+                        key={s.id}
+                        className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${
+                          s.data_status === 'no_data' ? 'bg-amber-50/40' : ''
+                        }`}
+                      >
+                        <td className="py-2 pr-4 font-mono font-medium text-gray-900">{s.symbol}</td>
+                        <td className="py-2 pr-4 text-gray-600 max-w-xs truncate">{s.name}</td>
+                        <td className="py-2 pr-4">
+                          <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">
+                            {s.universe_tag}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-4">
+                          {s.data_status === 'no_data' ? (
+                            <span
+                              title={s.data_error || 'No historical data from Dhan'}
+                              className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium cursor-help"
+                            >
+                              No Data
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={s.is_active}
+                            onChange={e => handleToggle(s.id, e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-2">
+                          <div className="flex items-center gap-3">
+                            {s.data_status === 'no_data' && (
+                              <button
+                                onClick={() => handleReset(s.id, s.symbol)}
+                                className="text-amber-600 hover:underline text-xs"
+                              >
+                                Re-enable
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDelete(s.id)}
+                              className="text-red-500 hover:underline text-xs"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-xs text-gray-400 mt-3">{visible.length} of {stocks.length} stock{stocks.length !== 1 ? 's' : ''}</p>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

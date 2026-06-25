@@ -13,3 +13,5 @@ class Stock(Base):
     universe_tag     = Column(Text, nullable=False, default="NIFTY500")
     is_active        = Column(Integer, nullable=False, default=1)
     added_at         = Column(Text, nullable=False)
+    data_status      = Column(Text, nullable=True)   # None | "ok" | "no_data"
+    data_error       = Column(Text, nullable=True)

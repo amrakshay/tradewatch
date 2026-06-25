@@ -13,14 +13,25 @@ def list_stocks(active: bool = True, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=StockRead)
-def add_stock(body: StockCreate, db: Session = Depends(get_db)):
-    return stock_service.add_stock(db, **body.model_dump())
+async def add_stock(body: StockCreate, db: Session = Depends(get_db)):
+    try:
+        return await stock_service.add_stock(db, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.patch("/{stock_id}", response_model=StockRead)
 def toggle_stock(stock_id: int, is_active: bool, db: Session = Depends(get_db)):
     try:
         return stock_service.toggle_stock(db, stock_id, is_active)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/{stock_id}/reset-status", response_model=StockRead)
+def reset_stock_status(stock_id: int, db: Session = Depends(get_db)):
+    try:
+        return stock_service.reset_stock_status(db, stock_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
