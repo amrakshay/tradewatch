@@ -1,0 +1,158 @@
+# TradeWatch — Feature Ideas
+
+---
+
+## Idea: 52-Week High / All-Time High Breakout Strategy
+
+### Background
+
+The current pullback strategy scans Nifty 500 stocks at 15:45 IST daily for stocks
+that have risen >10% over the last 4 trading days, stores them as signals, and lets
+the user manually set a price alert to catch the expected pullback to an entry price.
+The user has full control over when alerts are created.
+
+This new strategy is complementary — it detects breakouts rather than pullbacks —
+and should live alongside the existing strategy, sharing the stock universe, Dhan
+integration, candle cache, Telegram service, and scheduler infrastructure.
+
+---
+
+### New Strategy: Breakout Scanner
+
+**What it detects:**
+Scan the same configured stock list for stocks whose closing price on the current
+trading day exceeds their 52-week high OR all-time high (whichever is higher). A
+stock crosses this threshold when today's close > max(highest close in the last 52
+weeks, highest close ever recorded in our candle cache).
+
+**When it runs:**
+Market days at 15:45 IST (same time as the pullback scan, after Dhan's daily candle
+is finalized). Both strategies share the same scheduler trigger window.
+
+**Auto-alerts (key difference from pullback strategy):**
+Unlike the pullback strategy — where the user manually sets an alert price after
+reviewing signals — breakout alerts are created automatically on the day of the
+breakout. No user action required. The Telegram notification fires the same evening
+when the breakout is detected, not when a manual alert is later triggered.
+
+**Manual alerts:**
+After seeing a breakout in the history view, the user should also be able to set a
+manual price alert (e.g., to catch a re-test of the breakout level), identical to
+how manual alerts work on the pullback signals page.
+
+---
+
+### Components to Reuse
+
+- **stocks table + stock universe** — same list, no changes needed
+- **DhanService** — same OHLC and LTP API calls; 52-week high detection uses
+  historical daily candles already cached in candle_cache
+- **CandleCacheService** — the candle cache naturally accumulates the historical
+  data needed to compute 52-week and all-time highs; no schema changes needed
+- **TelegramService** — same notification plumbing; just a different message template
+- **AlertService** — reuse for manual alerts on breakout signals; may need a
+  strategy_type discriminator (pullback vs breakout) on the alerts table
+- **Scheduler (APScheduler)** — add a new breakout_scan job at 15:45 alongside the
+  existing daily_scan job; or unify into a single scan job that runs both strategies
+- **EncryptionService, ConfigService, TokenService** — no changes needed
+
+---
+
+### New Components Needed
+
+**Backend:**
+- `BreakoutScannerService` — for each active stock, load candle history from cache,
+  compute 52-week high and all-time high, compare today's close, emit signal if
+  breakout; auto-create alert and send Telegram notification on same run
+- `breakout_signals` table — similar shape to `scan_signals` but stores:
+  scan_date, symbol, security_id, close_price (today), breakout_level
+  (the 52wk/ATH high that was breached), breakout_type ('52W_HIGH' or 'ATH'),
+  pct_above_breakout (how far above the breakout level the close landed)
+- New API routes: `/breakout/signals?date=...`, `/breakout/signals/dates`,
+  `/breakout/signals/latest`, `/breakout/run` (manual trigger)
+- Extend `/alerts` to support breakout signals (signal_type field:
+  'pullback' vs 'breakout') so alert history stays unified
+
+**Frontend:**
+- Breakout Signals page — date picker showing each day's breakout stocks; columns:
+  Symbol, Breakout Type (52W / ATH), Close Price, Breakout Level, % Above;
+  "Set Manual Alert" button per row; badge if auto-alert already fired
+- Dashboard additions — breakout stat card (today's breakout count), recent breakout
+  entries alongside existing pullback recent signals
+
+---
+
+### Scan Logic (sketch)
+
+```python
+def is_breakout(candles: list[Candle], today_close: float) -> tuple[bool, str, float]:
+    # candles is sorted oldest → newest, includes today
+    past_candles = candles[:-1]  # exclude today for high calculation
+
+    # 52-week high: highest close in the last 252 trading days (approx 1 year)
+    lookback = past_candles[-252:] if len(past_candles) >= 252 else past_candles
+    high_52w = max(c.close for c in lookback)
+
+    # All-time high: highest close in entire candle_cache history for this stock
+    ath = max(c.close for c in past_candles)
+
+    breakout_level = max(high_52w, ath)
+    breakout_type = 'ATH' if ath >= high_52w else '52W_HIGH'
+
+    if today_close > breakout_level:
+        return True, breakout_type, breakout_level
+    return False, '', 0.0
+```
+
+---
+
+### Auto-Alert + Notification Flow
+
+```
+15:45 IST — BreakoutScannerService.run_scan()
+  for each active stock:
+    fetch candles (cache-first via DhanService)
+    check today's close vs 52W high and ATH
+    if breakout:
+      insert row into breakout_signals
+      auto-create alert row (status='triggered', triggered_at=now, no alert_price
+        needed — or alert_price = breakout_level as a reference point)
+      send Telegram: "🚀 Breakout: RELIANCE closed above ATH ₹2,450 (was ₹2,380)"
+```
+
+---
+
+### Telegram Message Format (breakout)
+
+```
+🚀 Breakout Detected: RELIANCE
+Type: All-Time High
+Today's Close: ₹2,450.00
+Breakout Level: ₹2,380.00 (+2.94% above)
+Date: 26 Jun 2024
+```
+
+---
+
+### Open Questions / Decisions Needed
+
+1. Should the breakout scan and pullback scan run as one unified job at 15:45, or
+   as two separate APScheduler jobs? (Unified is simpler; separate allows different
+   scan times per strategy in the future.)
+
+2. For the 52-week high calculation: use closing prices only (consistent with
+   pullback strategy) or intraday highs? Closing prices are simpler and already
+   cached; intraday highs would require adding high[] to the breakout logic.
+
+3. How many days of candle history should we ensure is loaded for each stock before
+   running the breakout scan? 252 trading days (≈1 year) is the minimum for 52W
+   high. We should pre-warm the cache for all active stocks on first run.
+
+4. Should auto-alerts created by the breakout scanner appear in the same Alerts
+   page (with a strategy_type='breakout' badge) or in a separate Breakout Alerts
+   section? Unified alerts page is simpler; separate sections are cleaner UX.
+
+5. What should the alert_price be for auto-created breakout alerts? Options:
+   (a) breakout_level (the 52W/ATH high that was breached — for reference),
+   (b) today's close,
+   (c) null / not applicable since there is no price target.
